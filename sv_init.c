@@ -56,6 +56,7 @@ int SV_ModelIndex (char *name)
 	for (i=0 ; i<MAX_MODELS && sv.model_precache[i] ; i++)
 		if (!strcmp(sv.model_precache[i], name))
 			return i;
+printf("MODEL i: %d\n", i);
 	if (i==MAX_MODELS || !sv.model_precache[i])
 		SV_Error ("SV_ModelIndex: model %s not precached", name);
 	return i;

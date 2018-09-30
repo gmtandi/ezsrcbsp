@@ -354,6 +354,16 @@ typedef struct
 	int	texdata;		// Pointer to texture name, size, etc.
 } texinfosrc_t;
 
+
+typedef struct
+{
+	float	reflectivity[3];		// RGB reflectivity
+	int	nummiptex; // nameStringTableID;	// index into TexdataStringTable
+	int	dataofs[4];
+//	int	width, height;		// source image
+//	int	view_width, view_height;
+} dtexdata_t;
+
 typedef struct
 {
 	unsigned short	planenum;		// the plane number
