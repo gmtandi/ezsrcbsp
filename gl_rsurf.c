@@ -29,16 +29,19 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //#define	BLOCK_WIDTH  128
 //#define	BLOCK_HEIGHT 128
 
-#define	BLOCK_WIDTH  4096
-#define	BLOCK_HEIGHT 4096
+//#define	BLOCK_WIDTH  4096
+//#define	BLOCK_HEIGHT 4096
 
 //#define	BLOCK_WIDTH  1024
 //#define	BLOCK_HEIGHT 1024
 
+#define	BLOCK_WIDTH  255
+#define	BLOCK_HEIGHT 255
+
 // #define MAX_LIGHTMAP_SIZE	(32 * 32) // it was 4096 for quite long time
-#define MAX_LIGHTMAP_SIZE	2560000
+//#define MAX_LIGHTMAP_SIZE	2560000
 //#define MAX_LIGHTMAP_SIZE	32764
-//#define MAX_LIGHTMAP_SIZE	4096
+#define MAX_LIGHTMAP_SIZE	4096
 
 int lightmap_textures;
 static unsigned blocklights[MAX_LIGHTMAP_SIZE * 3];
