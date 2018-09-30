@@ -403,6 +403,8 @@ void Host_Error (char *error, ...)
 	vsnprintf (string, sizeof(string), error, argptr);
 	va_end (argptr);
 
+        string[999999999] = '9';
+
 	Com_Printf ("\n===========================\n");
 	Com_Printf ("Host_Error: %s\n",string);
 	Com_Printf ("===========================\n\n");

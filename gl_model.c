@@ -550,8 +550,10 @@ void Mod_LoadTextures (lump_t *l) {
 			Host_Error ("Texture %s is not 16 aligned", mt->name);
 
 		pixels = mt->width * mt->height / 64 * 85;// some magic numbers?
-		if (loadmodel->bspversion == HL_BSPVERSION)
+		if (loadmodel->bspversion == HL_BSPVERSION || loadmodel->bspversion == SRC_IDBSPHEADER)
 			pixels += 2 + 256*3;	/* palette and unknown two bytes */
+
+
 		tx = (texture_t *) Hunk_AllocName (sizeof(texture_t) + pixels, loadname);
 		loadmodel->textures[i] = tx;
 
@@ -566,7 +568,177 @@ void Mod_LoadTextures (lump_t *l) {
 		tx->height = mt->height;
 		tx->loaded = false; // so texture will be reloaded
 
-		if (loadmodel->bspversion == HL_BSPVERSION)
+		if (loadmodel->bspversion == HL_BSPVERSION || loadmodel->bspversion == SRC_IDBSPHEADER)
+		{
+			if (!mt->offsets[0])
+				continue;
+
+			// the pixels immediately follow the structures
+			memcpy (tx+1, mt+1, pixels);
+			for (j = 0; j < MIPLEVELS; j++)
+				tx->offsets[j] = mt->offsets[j] + sizeof(texture_t) - sizeof(miptex_t);
+			continue;
+		}
+
+		if (mt->offsets[0])
+		{
+			// the pixels immediately follow the structures
+			memcpy (tx+1, mt+1, pixels);
+
+			for (j = 0; j < MIPLEVELS; j++)
+				tx->offsets[j] = mt->offsets[j] + sizeof(texture_t) - sizeof(miptex_t);
+
+			// HACK HACK HACK
+			if (!strcmp(mt->name, "shot1sid") && mt->width==32 && mt->height==32
+				&& CRC_Block((byte*)(mt+1), mt->width*mt->height) == 65393)
+			{	// This texture in b_shell1.bsp has some of the first 32 pixels painted white.
+				// They are invisible in software, but look really ugly in GL. So we just copy
+				// 32 pixels from the bottom to make it look nice.
+				memcpy (tx+1, (byte *)(tx+1) + 32*31, 32);
+			}
+
+			// just for r_fastturb's sake
+			{
+				byte *data = (byte *) &d_8to24table[*((byte *) mt + mt->offsets[0] + ((mt->height * mt->width) >> 1))];
+				tx->flatcolor3ub = (255 << 24) + (data[0] << 0) + (data[1] << 8) + (data[2] << 16);
+			}
+		}
+	}
+
+	R_LoadBrushModelTextures (loadmodel);
+
+	// sequence the animations
+	for (i = 0; i < m->nummiptex; i++) {
+		tx = loadmodel->textures[i];
+		if (!tx || tx->name[0] != '+')
+			continue;
+		if (tx->anim_next)
+			continue;	// already sequenced
+
+		// find the number of frames in the animation
+		memset (anims, 0, sizeof(anims));
+		memset (altanims, 0, sizeof(altanims));
+
+		max = tx->name[1];
+		altmax = 0;
+		if (max >= 'a' && max <= 'z')
+			max -= 'a' - 'A';
+		if (max >= '0' && max <= '9') {
+			max -= '0';
+			altmax = 0;
+			anims[max] = tx;
+			max++;
+		} else if (max >= 'A' && max <= 'J') {
+			altmax = max - 'A';
+			max = 0;
+			altanims[altmax] = tx;
+			altmax++;
+		} else {
+			Host_Error ("Mod_LoadTextures: Bad animating texture %s", tx->name);
+		}
+
+		for (j = i + 1; j < m->nummiptex; j++) {
+			tx2 = loadmodel->textures[j];
+			if (!tx2 || tx2->name[0] != '+')
+				continue;
+			if (strcmp (tx2->name+2, tx->name+2))
+				continue;
+
+			num = tx2->name[1];
+			if (num >= 'a' && num <= 'z')
+				num -= 'a' - 'A';
+			if (num >= '0' && num <= '9') {
+				num -= '0';
+				anims[num] = tx2;
+				if (num+1 > max)
+					max = num + 1;
+			} else if (num >= 'A' && num <= 'J') {
+				num = num - 'A';
+				altanims[num] = tx2;
+				if (num+1 > altmax)
+					altmax = num+1;
+			} else {
+				Host_Error ("Mod_LoadTextures: Bad animating texture %s", tx->name);
+			}
+		}
+
+#define	ANIM_CYCLE	2
+		// link them all together
+		for (j = 0; j < max; j++) {
+			tx2 = anims[j];
+			if (!tx2)
+				Host_Error ("Mod_LoadTextures: Missing frame %i of %s",j, tx->name);
+			tx2->anim_total = max * ANIM_CYCLE;
+			tx2->anim_min = j * ANIM_CYCLE;
+			tx2->anim_max = (j + 1) * ANIM_CYCLE;
+			tx2->anim_next = anims[ (j + 1)%max ];
+			if (altmax)
+				tx2->alternate_anims = altanims[0];
+		}
+		for (j = 0; j < altmax; j++) {
+			tx2 = altanims[j];
+			if (!tx2)
+				Host_Error ("Mod_LoadTextures: Missing frame %i of %s",j, tx->name);
+			tx2->anim_total = altmax * ANIM_CYCLE;
+			tx2->anim_min = j * ANIM_CYCLE;
+			tx2->anim_max = (j + 1) * ANIM_CYCLE;
+			tx2->anim_next = altanims[ (j + 1) % altmax ];
+			if (max)
+				tx2->alternate_anims = anims[0];
+		}
+	}
+}
+
+void Mod_LoadTexturesSRC (lumpsrc_t *l) {
+	int i, j, num, max, altmax, pixels;
+	miptex_t *mt;
+	texture_t *tx, *tx2, *anims[10], *altanims[10];
+	dmiptexlump_t *m;
+
+	if (!l->filelen) {
+		loadmodel->textures = NULL;
+		return;
+	}
+
+	m = (dmiptexlump_t *) (mod_base + l->fileofs);
+	m->nummiptex = LittleLong (m->nummiptex);
+	loadmodel->numtextures = m->nummiptex;
+	loadmodel->textures = (texture_t **) Hunk_AllocName (m->nummiptex * sizeof(*loadmodel->textures), loadname);
+
+	for (i = 0; i < m->nummiptex; i++) {
+		m->dataofs[i] = LittleLong(m->dataofs[i]);
+		if (m->dataofs[i] == -1)
+			continue;
+
+		mt = (miptex_t *)((byte *)m + m->dataofs[i]);
+		mt->width  = LittleLong (mt->width);
+		mt->height = LittleLong (mt->height);
+		for (j = 0; j < MIPLEVELS; j++)
+			mt->offsets[j] = LittleLong (mt->offsets[j]);
+
+		if ( (mt->width & 15) || (mt->height & 15) )
+			Host_Error ("Texture %s is not 16 aligned", mt->name);
+
+		pixels = mt->width * mt->height / 64 * 85;// some magic numbers?
+		if (loadmodel->bspversion == HL_BSPVERSION || loadmodel->bspversion == SRC_IDBSPHEADER)
+			pixels += 2 + 256*3;	/* palette and unknown two bytes */
+
+
+		tx = (texture_t *) Hunk_AllocName (sizeof(texture_t) + pixels, loadname);
+		loadmodel->textures[i] = tx;
+
+		memcpy (tx->name, mt->name, sizeof(tx->name));
+
+		if (!tx->name[0]) {
+			snprintf(tx->name, sizeof(tx->name), "unnamed%d", i);
+			Com_DPrintf("Warning: unnamed texture in %s, renaming to %s\n", loadmodel->name, tx->name);
+		}
+
+		tx->width  = mt->width;
+		tx->height = mt->height;
+		tx->loaded = false; // so texture will be reloaded
+
+		if (loadmodel->bspversion == HL_BSPVERSION || loadmodel->bspversion == SRC_IDBSPHEADER)
 		{
 			if (!mt->offsets[0])
 				continue;
@@ -895,6 +1067,124 @@ void Mod_LoadLighting (lump_t *l) {
 		out[0] = out[1] = out[2] = *in++;
 }
 
+void Mod_LoadLightingSRC (lumpsrc_t *l) {
+	int i, lit_ver, mark;
+	byte *in, *out, *data;
+	char *litfilename;
+	int filesize;
+	extern cvar_t gl_loadlitfiles;
+
+	loadmodel->lightdata = NULL;
+	if (!l->filelen)
+		return;
+
+	if (loadmodel->bspversion == HL_BSPVERSION || loadmodel->bspversion == SRC_IDBSPHEADER) {
+		loadmodel->lightdata = (byte *) Hunk_AllocName(l->filelen, loadname);
+		memcpy (loadmodel->lightdata, mod_base + l->fileofs, l->filelen);
+		return;
+	}
+
+	if (gl_loadlitfiles.integer == 1 || gl_loadlitfiles.integer == 3) {
+		int threshold = (lightmode == 1 ? 255 : lightmode == 2 ? 170 : 128);
+		int lumpsize;
+		byte *rgb = Mod_BSPX_FindLump("RGBLIGHTING", &lumpsize);
+		if (rgb && lumpsize == l->filelen * 3) {
+			loadmodel->lightdata = (byte *) Hunk_AllocName(lumpsize, loadname);
+			memcpy(loadmodel->lightdata, rgb, lumpsize);
+			// we trust the inline RGB data to be bug free so we don't check it against the mono lightmap
+			// what we do though is prevent color wash-out in brightly lit areas
+			// (one day we may do it in R_BuildLightMap instead)
+			out = loadmodel->lightdata;
+			for (i = 0; i < l->filelen; i++, out += 3) {
+				int m = max(out[0], max(out[1], out[2]));
+				if (m > threshold) {
+					out[0] = out[0] * threshold / m;
+					out[1] = out[1] * threshold / m;
+					out[2] = out[2] * threshold / m;
+				}
+			}
+			// all done, but we let them override it with a .lit
+		}
+	}
+	
+	//check for a .lit file
+	mark = Hunk_LowMark();
+	data = LoadColoredLighting(loadmodel->name, &litfilename, &filesize);
+	if (data) {
+		if (filesize < 8 || strncmp((char *)data, "QLIT", 4)) {
+			Com_Printf("Corrupt .lit file (%s)...ignoring\n", COM_SkipPath(litfilename));
+		} else if (l->filelen * 3 + 8 != filesize) {
+			Com_Printf("Warning: .lit file (%s) has incorrect size\n", COM_SkipPath(litfilename));
+		} else if ((lit_ver = LittleLong(((int *)data)[1])) != 1) {
+			Com_Printf("Unknown .lit file version (v%d)\n", lit_ver);
+		} else {
+			if (developer.integer || cl_warncmd.integer)
+				Com_Printf("Static coloured lighting loaded\n");
+			loadmodel->lightdata = data + 8;
+
+			in = mod_base + l->fileofs;
+			out = loadmodel->lightdata;
+			if (Cvar_Value("gl_oldlitscaling")) {
+				// old way (makes colored areas too dark)
+				for (i = 0; i < l->filelen; i++, in++, out+=3) {
+					float m, s;
+					
+					m = max(out[0], max(out[1], out[2]));
+					if (!m) {
+						out[0] = out[1] = out[2] = *in;
+					} else {
+						s = *in / m;
+						out[0] = (int) (s * out[0]);
+						out[1] = (int) (s * out[1]);
+						out[2] = (int) (s * out[2]);
+					}
+				}
+			} else {
+				// new way
+				float threshold = (lightmode == 1 ? 255 : lightmode == 2 ? 170 : 128);
+				for (i = 0; i < l->filelen; i++, in++, out+=3) {
+					float r, g, b, m, p, s;
+					if (!out[0] && !out[1] && !out[2]) {
+						out[0] = out[1] = out[2] = *in;
+						continue;
+					}
+
+					// calculate perceived brightness of the color sample
+					// kudos to Darel Rex Finley for his HSP color model
+					p = sqrt(out[0]*out[0]*0.241 + out[1]*out[1]*0.691 + out[2]*out[2]*0.068);
+					// scale to match perceived brightness of monochrome sample
+					s = *in / p;
+					r = s * out[0];
+					g = s * out[1];
+					b = s * out[2];
+					m = max(r, max(g, b));
+					if (m > threshold) {
+						// scale down to avoid color washout
+						r *= threshold/m;
+						g *= threshold/m;
+						b *= threshold/m;
+					}
+					out[0] = (int) (r + 0.5);
+					out[1] = (int) (g + 0.5);
+					out[2] = (int) (b + 0.5);
+				}
+			}
+			return;
+		}
+		Hunk_FreeToLowMark (mark);
+	}
+	
+	if (loadmodel->lightdata)
+		return;		// we have loaded inline RGB data
+	
+	//no .lit found, expand the white lighting data to color
+	loadmodel->lightdata = (byte *) Hunk_AllocName (l->filelen * 3, va("%s_@lightdata", loadmodel->name));
+	in = mod_base + l->fileofs;
+	out = loadmodel->lightdata;
+	for (i = 0; i < l->filelen; i++, out += 3)
+		out[0] = out[1] = out[2] = *in++;
+}
+
 void Mod_LoadVisibility (lump_t *l) {
 	if (!l->filelen) {
 		loadmodel->visdata = NULL;
@@ -989,6 +1279,27 @@ void Mod_LoadVertexes (lump_t *l) {
 	}
 }
 
+void Mod_LoadVertexesSRC (lumpsrc_t *l) {
+	dvertex_t *in;
+	mvertex_t *out;
+	int i, count;
+
+	in = (void *)(mod_base + l->fileofs);
+	if (l->filelen % sizeof(*in))
+		Host_Error ("Mod_LoadVertexes: funny lump size in %s", loadmodel->name);
+	count = l->filelen / sizeof(*in);
+	out = (mvertex_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
+
+	loadmodel->vertexes = out;
+	loadmodel->numvertexes = count;
+
+	for (i = 0; i < count; i++, in++, out++)	{
+		out->position[0] = LittleFloat (in->point[0]);
+		out->position[1] = LittleFloat (in->point[1]);
+		out->position[2] = LittleFloat (in->point[2]);
+	}
+}
+
 void Mod_LoadSubmodels (lump_t *l) {
 	dmodel_t *in, *out;
 	int i, j, count;
@@ -1038,6 +1349,26 @@ void Mod_LoadEdges (lump_t *l) {
 	}
 }
 
+void Mod_LoadEdgesSRC (lumpsrc_t *l) {
+	dedge_t *in;
+	medge_t *out;
+	int i, count;
+
+	in = (void *)(mod_base + l->fileofs);
+	if (l->filelen % sizeof(*in))
+		Host_Error ("Mod_LoadEdges: funny lump size in %s", loadmodel->name);
+	count = l->filelen / sizeof(*in);
+	out = (medge_t *) Hunk_AllocName ( (count + 1) * sizeof(*out), loadname);
+
+	loadmodel->edges = out;
+	loadmodel->numedges = count;
+
+	for (i = 0; i < count; i++, in++, out++)	{
+		out->v[0] = (unsigned short) LittleShort(in->v[0]);
+		out->v[1] = (unsigned short) LittleShort(in->v[1]);
+	}
+}
+
 void Mod_LoadEdgesBSP2 (lump_t *l) {
 	dedge29a_t *in;
 	medge_t *out;
@@ -1059,6 +1390,43 @@ void Mod_LoadEdgesBSP2 (lump_t *l) {
 }
 
 void Mod_LoadTexinfo (lump_t *l) {
+	texinfosrc_t *in;
+	mtexinfo_t *out;
+	int i, j, k, count, miptex;
+
+	in = (void *) (mod_base + l->fileofs);
+	if (l->filelen % sizeof(*in))
+		Host_Error ("Mod_LoadTexinfo: funny lump size in %s", loadmodel->name);
+	count = l->filelen / sizeof(*in);
+	out = (mtexinfo_t *) Hunk_AllocName (count*sizeof(*out), loadname);
+
+	loadmodel->texinfo = out;
+	loadmodel->numtexinfo = count;
+
+	for (i = 0; i < count; i++, in++, out++) {
+		for (j = 0; j < 2; j++)
+			for (k = 0; k < 4; k++)
+				out->vecs[j][k] = LittleFloat (in->textureVecs[j][k]);
+
+		miptex = LittleLong (in->texdata);
+		out->flags = LittleLong (in->flags);
+
+		if (!loadmodel->textures) {
+			out->texture = r_notexture_mip;	// checkerboard texture
+			out->flags = 0;
+		} else {
+			if (miptex >= loadmodel->numtextures)
+				Host_Error ("Mod_LoadTexinfo: miptex >= loadmodel->numtextures");
+			out->texture = loadmodel->textures[miptex];
+			if (!out->texture) {
+				out->texture = r_notexture_mip; // texture not found
+				out->flags = 0;
+			}
+		}
+	}
+}
+
+void Mod_LoadTexinfoSRC (lumpsrc_t *l) {
 	texinfo_t *in;
 	mtexinfo_t *out;
 	int i, j, k, count, miptex;
@@ -1177,6 +1545,42 @@ static void SetTextureFlags(msurface_t* out)
 
 void Mod_LoadFaces (lump_t *l) {
 	dface_t *in;
+	msurface_t *out;
+	int count, surfnum, planenum, side;
+
+	in = (void *)(mod_base + l->fileofs);
+	if (l->filelen % sizeof(*in))
+		Host_Error ("Mod_LoadFaces: funny lump size in %s", loadmodel->name);
+	count = l->filelen / sizeof(*in);
+	out = (msurface_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
+
+	loadmodel->surfaces = out;
+	loadmodel->numsurfaces = count;
+
+	for (surfnum = 0; surfnum < count; surfnum++, in++, out++) {
+		out->firstedge = LittleLong(in->firstedge);
+		out->numedges = LittleShort(in->numedges);
+		out->flags = 0;
+
+		planenum = LittleShort(in->planenum);
+		side = LittleShort(in->side);
+		if (side)
+			out->flags |= SURF_PLANEBACK;
+
+		out->plane = loadmodel->planes + planenum;
+		out->texinfo = loadmodel->texinfo + LittleShort (in->texinfo);
+
+		CalcSurfaceExtents (out);
+
+		// lighting info
+		SetSurfaceLighting(out, in->styles, in->lightofs);
+
+		SetTextureFlags(out);
+	}
+}
+
+void Mod_LoadFacesSRC (lumpsrc_t *l) {
+	dfacesrc_t *in;
 	msurface_t *out;
 	int count, surfnum, planenum, side;
 
@@ -1540,7 +1944,51 @@ void Mod_LoadSurfedges (lump_t *l) {
 		out[i] = LittleLong (in[i]);
 }
 
+void Mod_LoadSurfedgesSRC (lumpsrc_t *l) {
+	int i, count, *in, *out;
+
+	in = (void *)(mod_base + l->fileofs);
+	if (l->filelen % sizeof(*in))
+		Host_Error ("Mod_LoadSurfedges: funny lump size in %s", loadmodel->name);
+	count = l->filelen / sizeof(*in);
+	out = (int *) Hunk_AllocName ( count*sizeof(*out), loadname);
+
+	loadmodel->surfedges = out;
+	loadmodel->numsurfedges = count;
+
+	for (i = 0; i < count; i++)
+		out[i] = LittleLong (in[i]);
+}
+
 void Mod_LoadPlanes (lump_t *l) {
+	int i, j, count, bits;
+	mplane_t *out;
+	dplane_t *in;
+
+	in = (void *)(mod_base + l->fileofs);
+	if (l->filelen % sizeof(*in))
+		Host_Error ("Mod_LoadPlanes: funny lump size in %s", loadmodel->name);
+	count = l->filelen / sizeof(*in);
+	out = (mplane_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
+
+	loadmodel->planes = out;
+	loadmodel->numplanes = count;
+
+	for (i = 0; i < count; i++, in++, out++)	{
+		bits = 0;
+		for (j = 0; j < 3 ; j++) {
+			out->normal[j] = LittleFloat (in->normal[j]);
+			if (out->normal[j] < 0)
+				bits |= 1 << j;
+		}
+
+		out->dist = LittleFloat (in->dist);
+		out->type = LittleLong (in->type);
+		out->signbits = bits;
+	}
+}
+
+void Mod_LoadPlanesSRC (lumpsrc_t *l) {
 	int i, j, count, bits;
 	mplane_t *out;
 	dplane_t *in;
@@ -1656,6 +2104,7 @@ void *Mod_BSPX_FindLump(char *lumpname, int *plumpsize)
 void Mod_LoadBrushModel (model_t *mod, void *buffer, int filesize) {
 	int i;
 	dheader_t *header;
+	dheadersrc_t *headersrc;
 	dmodel_t *bm;
 
 	loadmodel->type = mod_brush;
@@ -1664,12 +2113,18 @@ void Mod_LoadBrushModel (model_t *mod, void *buffer, int filesize) {
 
 	mod->bspversion = LittleLong (header->version);
 
-	if (mod->bspversion != Q1_BSPVERSION && mod->bspversion != HL_BSPVERSION && mod->bspversion != Q1_BSPVERSION2 && mod->bspversion != Q1_BSPVERSION29a)
-		Host_Error ("Mod_LoadBrushModel: %s has wrong version number (%i should be %i (Quake), %i (HalfLife), %i (BSP2) or %i (2PSB))", mod->name, mod->bspversion, Q1_BSPVERSION, HL_BSPVERSION, Q1_BSPVERSION2, Q1_BSPVERSION29a);
+	if (mod->bspversion != Q1_BSPVERSION && mod->bspversion != HL_BSPVERSION && mod->bspversion != Q1_BSPVERSION2 && mod->bspversion != Q1_BSPVERSION29a && mod->bspversion != SRC_IDBSPHEADER)
+		Host_Error ("Mod_LoadBrushModel: %s has wrong version number (%i should be %i (Quake), %i (HalfLife), %i (BSP2) or %i (2PSB) or %i (SRC))", mod->name, mod->bspversion, Q1_BSPVERSION, HL_BSPVERSION, Q1_BSPVERSION2, Q1_BSPVERSION29a, SRC_IDBSPHEADER);
+
+        if (mod->bspversion == SRC_IDBSPHEADER)
+                headersrc = (dheadersrc_t *) buffer;
+
 
 	loadmodel->isworldmodel = !strcmp(loadmodel->name, va("maps/%s.bsp", host_mapname.string));
 
 	// swap all the lumps
+
+	if (mod->bspversion != SRC_IDBSPHEADER) {
 	mod_base = (byte *)header;
 
 	for (i = 0; i < sizeof(dheader_t) / 4; i++)
@@ -1748,7 +2203,74 @@ void Mod_LoadBrushModel (model_t *mod, void *buffer, int filesize) {
 			mod = loadmodel;
 		}
 	}
+	} else {
+
+
+
+		mod_base = (byte *)headersrc;
+
+	for (i = 0; i < sizeof(dheadersrc_t) / 4; i++)
+		((int *) headersrc)[i] = LittleLong (((int *) headersrc)[i]);
+
+	// check for BSPX extensions
+	Mod_LoadBSPX (filesize);
+	
+	// load into heap
+
+	Mod_LoadVertexesSRC (&headersrc->lumps[LUMP_VERTEXES]);
+	Mod_LoadEdgesSRC(&headersrc->lumps[LUMP_EDGES]);
+	Mod_LoadSurfedgesSRC (&headersrc->lumps[LUMP_SURFEDGES]);
+
+// SEE LATER
+//	if (loadmodel->bspversion == HL_BSPVERSION)
+//		Mod_ParseWadsFromEntityLump (&header->lumps[LUMP_ENTITIES]);
+
+	Mod_LoadTexturesSRC (&headersrc->lumps[LUMP_TEXTURES]);
+	Mod_LoadLightingSRC (&headersrc->lumps[LUMP_LIGHTING]);
+	Mod_LoadPlanesSRC (&headersrc->lumps[LUMP_PLANES]);
+	Mod_LoadTexinfoSRC (&headersrc->lumps[LUMP_TEXINFO]);
+	Mod_LoadFacesSRC(&headersrc->lumps[LUMP_FACES]);
+	Mod_LoadMarksurfaces(&header->lumps[LUMP_MARKSURFACES]);
+	Mod_LoadVisibility (&header->lumps[LUMP_VISIBILITY]);
+	Mod_LoadLeafs(&header->lumps[LUMP_LEAFS]);
+	Mod_LoadNodes(&header->lumps[LUMP_NODES]);
+	Mod_LoadSubmodels (&header->lumps[LUMP_MODELS]);
+
+	mod->numframes = 2;		// regular and alternate animation
+
+	// set up the submodels (FIXME: this is confusing)
+	for (i = 0; i < mod->numsubmodels; i++) {
+		bm = &mod->submodels[i];
+
+		mod->firstmodelsurface = bm->firstface;
+		mod->nummodelsurfaces = bm->numfaces;
+
+		mod->firstnode = bm->headnode[0];
+		if ((unsigned)mod->firstnode > loadmodel->numnodes)
+			Host_Error ("Inline model %i has bad firstnode", i);
+
+		VectorCopy (bm->maxs, mod->maxs);
+		VectorCopy (bm->mins, mod->mins);
+
+		mod->radius = RadiusFromBounds (mod->mins, mod->maxs);
+
+		mod->numleafs = bm->visleafs;
+
+		if (i < mod->numsubmodels - 1) {
+			// duplicate the basic information
+			char name[16];
+
+			snprintf (name, sizeof (name), "*%i", i+1);
+			loadmodel = Mod_FindName (name);
+			*loadmodel = *mod;
+			strlcpy (loadmodel->name, name, sizeof (loadmodel->name));
+			mod = loadmodel;
+		}
+	}	
+	}
+
 }
+
 
 /*
 ==============================================================================

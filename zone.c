@@ -174,6 +174,7 @@ void *Hunk_AllocName(int size, char *name)
 	size = sizeof(hunk_t) + ((size + 15) & ~15);
 
 	if (hunk_size - hunk_low_used - hunk_high_used < size) {
+		printf ("hunk_size: %d, hunk_low_used: %d, hunk_high_used: %d, size: %d\n", hunk_size, hunk_low_used, hunk_high_used, size);
 #ifdef SERVERONLY
 		Sys_Error("Hunk_AllocName: Not enough RAM allocated. Try starting using \"-mem 64\" (or more) on the command line.");
 #else

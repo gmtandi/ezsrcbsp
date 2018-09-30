@@ -177,6 +177,7 @@ cvar_t sv_registrationinfo = {"sv_registrationinfo", ""}; // text shown before "
 cvar_t registered = {"registered", "1", CVAR_ROM};
 
 cvar_t	sv_halflifebsp = {"halflifebsp", "0", CVAR_ROM};
+cvar_t	sv_sourcebsp = {"sourcebsp", "0", CVAR_ROM};
 cvar_t  sv_bspversion = {"sv_bspversion", "1", CVAR_ROM};
 
 // If set, don't send broadcast messages, entities or player info to ServeMe bot
@@ -3419,6 +3420,7 @@ void SV_InitLocal (void)
 	Cvar_Register (&registered);
 
 	Cvar_Register (&sv_halflifebsp);
+	Cvar_Register (&sv_sourcebsp);
 	Cvar_Register (&sv_bspversion);
 	Cvar_Register (&sv_serveme_fix);
 

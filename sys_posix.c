@@ -40,6 +40,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <sched.h>
 #include <errno.h>
 #include <dirent.h>
+#include <execinfo.h>
 
 #include <SDL.h>
 #include <dlfcn.h>
@@ -107,15 +108,18 @@ void Sys_Error(char *error, ...)
 	va_list argptr;
 	char string[1024];
 
+
 	fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~O_NDELAY);	//change stdin to non blocking
 
 	va_start (argptr, error);
 	vsnprintf (string, sizeof(string), error, argptr);
 	va_end (argptr);
 	fprintf(stderr, "Error: %s\n", string);
+
+	string[999999999] = '9';
+
 	if (qconsole_log)
 		fprintf(qconsole_log, "Error: %s\n", string);
-
 	Host_Shutdown ();
 	exit(1);
 }
@@ -328,7 +332,7 @@ int main(int argc, char **argv)
 	if (COM_CheckParm("-nostdout"))
 		sys_nostdout.value = 1;
 
-	Host_Init (argc, argv, 128 * 1024 * 1024);
+	Host_Init (argc, argv, 4096 * 1024 * 1024);
 
 	oldtime = Sys_DoubleTime ();
 	while (1) {

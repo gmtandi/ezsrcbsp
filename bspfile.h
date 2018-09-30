@@ -57,6 +57,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define HL_BSPVERSION     30
 #define Q1_BSPVERSION29a  (('2') + ('P' << 8) + ('S' << 16) + ('B' << 24))
 #define Q1_BSPVERSION2    (('B') + ('S' << 8) + ('P' << 16) + ('2' << 24))
+// little-endian "VBSP"   0x50534256
+#define SRC_IDBSPHEADER	(('P'<<24)+('S'<<16)+('B'<<8)+'V')
 
 typedef struct
 {
@@ -80,6 +82,7 @@ typedef struct
 #define	LUMP_MODELS		14
 
 #define	HEADER_LUMPS	15
+#define	HEADER_LUMPSSRC	64
 
 typedef struct
 {
@@ -284,5 +287,92 @@ typedef struct {
 
 	byte           ambient_level[NUM_AMBIENTS];
 } dleaf_bsp2_t;
+
+typedef struct
+{
+	int	fileofs;	// offset into file (bytes)
+	int	filelen;	// length of lump (bytes)
+	int	version;	// lump format version
+	char	fourCC[4];	// lump ident code
+} lumpsrc_t;
+
+typedef struct
+{
+	int	ident;                // BSP file identifier
+	int	version;              // BSP file version
+	lumpsrc_t	lumps[HEADER_LUMPS];  // lump directory array
+	int	mapRevision;          // the map's revision (iteration, version) number
+} dheadersrc_t;
+
+typedef struct
+{
+	int			contents;		// OR of all brushes (not needed?)
+	short			cluster;		// cluster this leaf is in
+	short			area:9;			// area this leaf is in
+	short			flags:7;		// flags
+	short			mins[3];		// for frustum culling
+	short			maxs[3];
+	unsigned short		firstleafface;		// index into leaffaces
+	unsigned short		numleaffaces;
+	unsigned short		firstleafbrush;		// index into leafbrushes
+	unsigned short		numleafbrushes;
+	short			leafWaterDataID;	// -1 for not in water
+
+	//!!! NOTE: for maps of version 19 or lower uncomment this block
+	/*
+	CompressedLightCube	ambientLighting;	// Precaculated light info for entities.
+	short			padding;		// padding to 4-byte boundary
+	*/
+} dleafsrc_t;
+
+typedef struct
+{
+	int		planenum;	// index into plane array
+	int		children[2];	// negative numbers are -(leafs + 1), not nodes
+	short		mins[3];	// for frustum culling
+	short		maxs[3];
+	unsigned short	firstface;	// index into face array
+	unsigned short	numfaces;	// counting both sides
+	short		area;		// If all leaves below this node are in the same area, then
+					// this is the area index. If not, this is -1.
+	short		paddding;	// pad to 32 bytes length
+}  dnodesrc_t;
+
+typedef struct
+{
+        float       mins[3], maxs[3];	// bounding box
+        float       origin[3];		// for sounds or lights
+	int	headnode;		// index into node array
+	int	firstface, numfaces;	// index into face array
+} dmodelsrc_t;
+
+typedef struct
+{
+	float	textureVecs[2][4];	// [s/t][xyz offset]
+	float	lightmapVecs[2][4];	// [s/t][xyz offset] - length is in units of texels/area
+	int	flags;			// miptex flags	overrides
+	int	texdata;		// Pointer to texture name, size, etc.
+} texinfosrc_t;
+
+typedef struct
+{
+	unsigned short	planenum;		// the plane number
+	byte		side;			// faces opposite to the node's plane direction
+	byte		onNode;			// 1 of on node, 0 if in leaf
+	int		firstedge;		// index into surfedges
+	short		numedges;		// number of surfedges
+	short		texinfo;		// texture info
+	short		dispinfo;		// displacement info
+	short		surfaceFogVolumeID;	// ?
+	byte		styles[4];		// switchable lighting info
+	int		lightofs;		// offset into lightmap lump
+	float		area;			// face area in units^2
+	int		LightmapTextureMinsInLuxels[2];	// texture lighting info
+	int		LightmapTextureSizeInLuxels[2];	// texture lighting info
+	int		origFace;		// original face this was split from
+	unsigned short	numPrims;		// primitives
+	unsigned short	firstPrimID;
+	unsigned int	smoothingGroups;	// lightmap smoothing group
+} dfacesrc_t;
 
 #endif /* !__BSPFILE_H__ */

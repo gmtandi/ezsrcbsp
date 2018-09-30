@@ -74,6 +74,7 @@ static int			map_vis_rowlongs;			// map_vis_rowbytes / 4
 static char			*map_entitystring;
 
 static qbool		map_halflife;
+static qbool		map_source;
 
 static byte			*cmod_base;					// for CM_Load* functions
 
@@ -211,7 +212,7 @@ start:
 	// FIXME, check at load time
 	if (num < hull->firstclipnode || num > hull->lastclipnode)
 	{
-		if (map_halflife && num == hull->lastclipnode + 1)
+		if ((map_halflife && num == hull->lastclipnode + 1) || (map_source))
 			return TR_EMPTY;
 		Sys_Error ("RecursiveHullTrace: bad node number");
 	}
@@ -484,9 +485,9 @@ static void FindTouchedLeafs_r(const cnode_t *node)
 	int sides;
 
 	while (1) {
-		if (node->contents == CONTENTS_SOLID) {
+//		if (node->contents == CONTENTS_SOLID) {
 			return;
-		}
+//		}
 
 		// the node is a leaf
 		if (node->contents < 0) {
@@ -502,7 +503,8 @@ static void FindTouchedLeafs_r(const cnode_t *node)
 
 		// NODE_MIXED
 		splitplane = node->plane;
-		sides = BOX_ON_PLANE_SIDE(leafs_mins, leafs_maxs, splitplane);
+//		sides = BOX_ON_PLANE_SIDE(leafs_mins, leafs_maxs, splitplane);
+sides = 1;
 
 		// recurse down the contacted sides
 		if (sides == 1) {
@@ -565,6 +567,16 @@ static void CM_LoadEntities (lump_t *l)
 	memcpy (map_entitystring, cmod_base + l->fileofs, l->filelen);
 }
 
+static void CM_LoadEntitiesSRC (lumpsrc_t *l)
+{
+	if (!l->filelen) {
+		map_entitystring = NULL;
+		return;
+	}
+	map_entitystring = (char *) Hunk_AllocName (l->filelen, loadname);
+	memcpy (map_entitystring, cmod_base + l->fileofs, l->filelen);
+}
+
 
 /*
 =================
@@ -595,6 +607,7 @@ static void CM_LoadSubmodels (lump_t *l)
 
 	visleafs = LittleLong (in[0].visleafs);
 
+
 	for (i = 0; i < count; i++, in++, out++)
 	{
 		for (j = 0; j < 3; j++) {
@@ -613,7 +626,7 @@ static void CM_LoadSubmodels (lump_t *l)
 		VectorClear (out->hulls[0].clip_mins);
 		VectorClear (out->hulls[0].clip_maxs);
 
-		if (map_halflife)
+		if (map_halflife || map_source)
 		{
 			VectorSet (out->hulls[1].clip_mins, -16, -16, -32);
 			VectorSet (out->hulls[1].clip_maxs, 16, 16, 32);
@@ -635,6 +648,64 @@ static void CM_LoadSubmodels (lump_t *l)
 	}
 }
 
+static void CM_LoadSubmodelsSRC (lumpsrc_t *l)
+{
+	dmodelsrc_t *in;
+	cmodel_t *out;
+	int i, j, count;
+
+	in = (dmodelsrc_t *)(cmod_base + l->fileofs);
+
+	if (l->filelen % sizeof(*in))
+		Host_Error ("CM_LoadMap: funny lump size");
+
+	count = l->filelen / sizeof(*in);
+
+	if (count < 1)
+		Host_Error ("Map with no models");
+
+	if (count > MAX_MAP_MODELS)
+		Host_Error ("Map has too many models (%d vs %d)", count, MAX_MAP_MODELS);
+
+	out = map_cmodels;
+	numcmodels = count;
+
+//	visleafs = LittleLong (in[0].visleafs);
+	visleafs = LittleLong(10);
+
+	Com_Printf("visleafs: %d \n", visleafs);
+	printf("modelscount: %d \n", count);
+
+	for (i = 0; i < count; i++, in++, out++)
+	{
+		for (j = 0; j < 3; j++) {
+			// spread the mins / maxs by a pixel
+			out->mins[j] = LittleFloat (in->mins[j]) - 1;
+			out->maxs[j] = LittleFloat (in->maxs[j]) + 1;
+			out->origin[j] = LittleFloat (in->origin[j]);
+		}
+		for (j = 0; j < MAX_MAP_HULLS; j++) {
+			out->hulls[j].planes = map_planes;
+			out->hulls[j].clipnodes = map_clipnodes;
+//			out->hulls[j].firstclipnode = LittleLong (in->headnode[j]);
+			out->hulls[j].firstclipnode = LittleLong (in->headnode);
+			out->hulls[j].lastclipnode = numclipnodes - 1;
+		}
+
+		VectorClear (out->hulls[0].clip_mins);
+		VectorClear (out->hulls[0].clip_maxs);
+
+			VectorSet (out->hulls[1].clip_mins, -16, -16, -32);
+			VectorSet (out->hulls[1].clip_maxs, 16, 16, 32);
+
+			VectorSet (out->hulls[2].clip_mins, -32, -32, -32);
+			VectorSet (out->hulls[2].clip_maxs, 32, 32, 32);
+			// not really used
+			VectorSet (out->hulls[3].clip_mins, -16, -16, -18);
+			VectorSet (out->hulls[3].clip_maxs, 16, 16, 18);
+	}
+}
+
 /*
 =================
 CM_SetParent
@@ -643,10 +714,28 @@ CM_SetParent
 static void CM_SetParent (cnode_t *node, cnode_t *parent)
 {
 	node->parent = parent;
+
+	Com_Printf("Node->contsnts %d \n", node->contents);
+
 	if (node->contents < 0)
 		return;
 	CM_SetParent (node->children[0], node);
 	CM_SetParent (node->children[1], node);
+}
+
+static void CM_SetParentSRC (cnode_t *node, cnode_t *parent)
+{
+	node->parent = parent;
+
+	Com_Printf("Node->contsnts %d \n", node->contents);
+
+	if (node->contents < 0)
+		return;
+
+// TODO //
+
+//	CM_SetParent (node->children[0], node);
+//	CM_SetParent (node->children[1], node);
 }
 
 /*
@@ -683,6 +772,40 @@ static void CM_LoadNodes (lump_t *l)
 	}
 
 	CM_SetParent (map_nodes, NULL); // sets nodes and leafs
+}
+
+static void CM_LoadNodesSRC (lumpsrc_t *l)
+{
+	int i, j, count, p;
+	dnodesrc_t *in;
+	cnode_t *out;
+
+	in = (dnodesrc_t *)(cmod_base + l->fileofs);
+	if (l->filelen % sizeof(*in))
+		Host_Error ("CM_LoadMap: funny lump size");
+
+	count = l->filelen / sizeof(*in);
+	out = (cnode_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
+
+Com_Printf("count: %d, filelen: %d, sizeof in: %d \n", count, l->filelen, sizeof(*in));
+
+	map_nodes = out;
+	numnodes = count;
+
+	for (i = 0; i < count; i++, in++, out++)
+	{
+		p = LittleLong(in->planenum);
+		out->plane = map_planes + p;
+
+		for (j=0 ; j<2 ; j++)
+		{
+			p = LittleShort (in->children[j]);
+			out->children[j] = (p >= 0) ? (map_nodes + p) : ((cnode_t *)(map_leafs + (-1 - p)));
+		}
+	}
+
+	CM_SetParentSRC (map_nodes, NULL); // sets nodes and leafs
+
 }
 
 static void CM_LoadNodes29a(lump_t *l)
@@ -770,6 +893,36 @@ static void CM_LoadLeafs (lump_t *l)
 	}
 }
 
+static void CM_LoadLeafsSRC (lumpsrc_t *l)
+{
+	dleafsrc_t *in;
+	cleaf_t *out;
+	int i, count, p;
+
+	in = (dleafsrc_t *)(cmod_base + l->fileofs);
+
+
+        Com_Printf("Loading leafs \n");
+
+	if (l->filelen % sizeof(*in))
+		Host_Error ("CM_LoadMap: funny lump size");
+
+	count = l->filelen / sizeof(*in);
+	out = (cleaf_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
+
+	map_leafs = out;
+	numleafs = count;
+
+	for (i = 0; i < count; i++, in++, out++) {
+		p = LittleLong(in->contents);
+		out->contents = p;
+//		for (j = 0; j < 4; j++)
+//			out->ambient_sound_level[j] = in->ambient_level[j];
+	}
+	Com_Printf("Leafs loaded: %d \n", i);
+
+}
+
 static void CM_LoadLeafs29a (lump_t *l)
 {
 	dleaf29a_t *in;
@@ -840,6 +993,33 @@ static void CM_LoadClipnodes(lump_t *l)
 		Host_Error("CM_LoadMap: funny lump size");
 	count = l->filelen / sizeof(*in);
 	out = (mclipnode_t *)Hunk_AllocName(count * sizeof(*out), loadname);
+
+	map_clipnodes = out;
+	numclipnodes = count;
+
+	for (i = 0; i < count; i++, out++, in++) {
+		out->planenum = LittleLong(in->planenum);
+		out->children[0] = LittleShort(in->children[0]);
+		out->children[1] = LittleShort(in->children[1]);
+	}
+}
+
+static void CM_LoadClipnodesSRC(lumpsrc_t *l)
+{
+	dclipnode_t *in;
+	mclipnode_t *out;
+	int i, count;
+
+	in = (dclipnode_t *)(cmod_base + l->fileofs);
+
+	count = l->filelen / sizeof(*in);
+
+	Com_Printf("count: %d, filelen: %d, sizeof in: %d \n", count, l->filelen, sizeof(*in));
+
+	if (l->filelen % sizeof(*in))
+		Host_Error("CM_LoadMap: funny lump size");
+	out = (mclipnode_t *)Hunk_AllocName(count * sizeof(*out), loadname);
+
 
 	map_clipnodes = out;
 	numclipnodes = count;
@@ -942,6 +1122,37 @@ static void CM_LoadPlanes(lump_t *l)
 	}
 }
 
+static void CM_LoadPlanesSRC(lumpsrc_t *l)
+{
+	int i, j, count, bits;
+	mplane_t *out;
+	dplane_t *in;
+
+	in = (dplane_t *)(cmod_base + l->fileofs);
+
+	if (l->filelen % sizeof(*in))
+		Host_Error("CM_LoadMap: funny lump size");
+
+	count = l->filelen / sizeof(*in);
+	out = (mplane_t *)Hunk_AllocName(count * sizeof(*out), loadname);
+
+	map_planes = out;
+	numplanes = count;
+
+	for (i = 0; i < count; i++, in++, out++) {
+		bits = 0;
+		for (j = 0; j < 3; j++) {
+			out->normal[j] = LittleFloat(in->normal[j]);
+			if (out->normal[j] < 0)
+				bits |= 1 << j;
+		}
+
+		out->dist = LittleFloat(in->dist);
+		out->type = LittleLong(in->type);
+		out->signbits = bits;
+	}
+}
+
 
 /*
 ** DecompressVis
@@ -1011,6 +1222,35 @@ static void CM_BuildPVS(lump_t *lump_vis, lump_t *lump_leafs)
 	scan = map_pvs;
 	for (i = 0; i < visleafs; i++, in++, scan += map_vis_rowbytes) {
 		int p = LittleLong(in->visofs);
+		memcpy(scan, (p == -1) ? map_novis : DecompressVis(visdata + p), map_vis_rowbytes);
+	}
+}
+
+static void CM_BuildPVSSRC(lumpsrc_t *lump_vis, lumpsrc_t *lump_leafs)
+{
+	byte *visdata, *scan;
+	dleafsrc_t *in;
+	int i;
+
+	map_vis_rowlongs = (visleafs + 31) >> 5;
+	map_vis_rowbytes = map_vis_rowlongs * 4;
+	map_pvs = (byte *)Hunk_Alloc(map_vis_rowbytes * visleafs);
+
+	if (!lump_vis->filelen) {
+		memset(map_pvs, 0xff, map_vis_rowbytes * visleafs);
+		return;
+	}
+
+	// FIXME, add checks for lump_vis->filelen and leafs' visofs
+
+	visdata = cmod_base + lump_vis->fileofs;
+
+	// go through all leafs and decompress visibility data
+	in = (dleafsrc_t *)(cmod_base + lump_leafs->fileofs);
+	in++; // pvs row 0 is leaf 1
+	scan = map_pvs;
+	for (i = 0; i < visleafs; i++, in++, scan += map_vis_rowbytes) {
+		int p = LittleLong(in->cluster);
 		memcpy(scan, (p == -1) ? map_novis : DecompressVis(visdata + p), map_vis_rowbytes);
 	}
 }
@@ -1143,17 +1383,20 @@ void CM_InvalidateMap (void)
 ** CM_LoadMap
 */
 typedef void(*BuildPVSFunction)(lump_t *lump_vis, lump_t *lump_leafs);
+typedef void(*BuildPVSFunctionSRC)(lumpsrc_t *lump_vis, lumpsrc_t *lump_leafs);
 cmodel_t *CM_LoadMap (char *name, qbool clientload, unsigned *checksum, unsigned *checksum2)
 {
 #ifndef CLIENTONLY
-	extern cvar_t sv_bspversion, sv_halflifebsp;
+	extern cvar_t sv_bspversion, sv_halflifebsp, sv_sourcebsp;
 #endif
 
 	unsigned int i;
 	dheader_t *header;
+	dheadersrc_t *headersrc;
 	unsigned int *buf;
 	unsigned int *padded_buf = NULL;
 	BuildPVSFunction cm_load_pvs_func = CM_BuildPVS;
+	BuildPVSFunctionSRC cm_load_pvs_funcSRC = CM_BuildPVSSRC;
 	qbool pad_lumps = false;
 	int required_length = 0;
 	int filelen = 0;
@@ -1177,82 +1420,187 @@ cmodel_t *CM_LoadMap (char *name, qbool clientload, unsigned *checksum, unsigned
 	header = (dheader_t *)buf;
 
 	i = LittleLong (header->version);
-	if (i != Q1_BSPVERSION && i != HL_BSPVERSION && i != Q1_BSPVERSION2 && i != Q1_BSPVERSION29a)
+	if (i != Q1_BSPVERSION && i != HL_BSPVERSION && i != Q1_BSPVERSION2 && i != Q1_BSPVERSION29a && i != SRC_IDBSPHEADER)
 		Host_Error ("CM_LoadMap: %s has wrong version number (%i should be %i)", name, i, Q1_BSPVERSION);
 
+	if (i == SRC_IDBSPHEADER)
+		headersrc = (dheadersrc_t *) buf;
+
 	map_halflife = (i == HL_BSPVERSION);
+	map_source = (i == SRC_IDBSPHEADER);
+
+	if (!map_source) {
+		Com_Printf("Version: %d \n", header->version);
+	} else {
+		Com_Printf("Version: %d \n", headersrc->version);
+	}
+
 
 #ifndef CLIENTONLY
 	Cvar_SetROM(&sv_halflifebsp, map_halflife ? "1" : "0");
+	Cvar_SetROM(&sv_sourcebsp, map_source ? "1" : "0");
 	Cvar_SetROM(&sv_bspversion, i == Q1_BSPVERSION || i == HL_BSPVERSION ? "1" : "2");
 #endif
 
 	// swap all the lumps
-	for (i = 0; i < sizeof(dheader_t) / 4; i++) {
-		((int *)header)[i] = LittleLong(((int *)header)[i]);
+	if (!map_source) {
+		for (i = 0; i < sizeof(dheader_t) / 4; i++) {
+			((int *)header)[i] = LittleLong(((int *)header)[i]);
+		}
+	} else {
+		for (i = 0; i < sizeof(dheadersrc_t) / 4; i++) {
+			((int *)headersrc)[i] = LittleLong(((int *)headersrc)[i]);
+		}
 	}
+
+	Com_Printf("sizeof dheader: %d \n", sizeof (dheader_t));
+	Com_Printf("sizeof dheadersrc: %d \n", sizeof (dheadersrc_t));
+
 
 	// Align the lumps
-	for (i = 0; i < HEADER_LUMPS; ++i) {
-		pad_lumps |= (header->lumps[i].fileofs % 4) != 0;
-
-		if (header->lumps[i].fileofs < 0 || header->lumps[i].filelen < 0) {
-			Host_Error("CM_LoadMap: %s has invalid lump definitions", name);
-		}
-		if (header->lumps[i].fileofs + header->lumps[i].filelen > filelen || header->lumps[i].fileofs + header->lumps[i].filelen < 0) {
-			Host_Error("CM_LoadMap: %s has invalid lump definitions", name);
-		}
-
-		required_length += header->lumps[i].filelen;
-	}
-
-	if (pad_lumps) {
-		int position = 0;
-		int required_size = sizeof(dheader_t) + required_length + HEADER_LUMPS * 4 + 1;
-		padded_buf = Q_malloc(required_size);
-
-		// Copy header
-		memcpy(padded_buf, buf, sizeof(dheader_t));
-		header = (dheader_t*)padded_buf;
-		position += sizeof(dheader_t);
-
-		// Copy lumps: align on 4-byte boundary
+	if (!map_source) {
 		for (i = 0; i < HEADER_LUMPS; ++i) {
-			if (position % 4) {
-				position += 4 - (position % 4);
-			}
-			if (position + header->lumps[i].filelen > required_size) {
-				Host_Error("CM_LoadMap: %s caused error while aligning lumps", name);
-			}
-			memcpy((byte*)padded_buf + position, ((byte*)buf) + header->lumps[i].fileofs, header->lumps[i].filelen);
-			header->lumps[i].fileofs = position;
+			pad_lumps |= (header->lumps[i].fileofs % 4) != 0;
 
-			position += header->lumps[i].filelen;
+			if (header->lumps[i].fileofs < 0 || header->lumps[i].filelen < 0) {
+				Host_Error("CM_LoadMap: %s has invalid lump definitions", name);
+			}
+			if (header->lumps[i].fileofs + header->lumps[i].filelen > filelen || header->lumps[i].fileofs + header->lumps[i].filelen < 0) {
+				Host_Error("CM_LoadMap: %s has invalid lump definitions", name);
+			}
+
+			required_length += header->lumps[i].filelen;
 		}
+	} else {
+		for (i = 0; i < HEADER_LUMPSSRC; ++i) {
+			pad_lumps |= (headersrc->lumps[i].fileofs % 4) != 0;
 
-		// Use the new buffer
-		buf = padded_buf;
+			if (headersrc->lumps[i].fileofs < 0 || headersrc->lumps[i].filelen < 0) {
+				Host_Error("CM_LoadMap: %s has invalid lump definitions", name);
+			}
+			if (headersrc->lumps[i].fileofs + headersrc->lumps[i].filelen > filelen || headersrc->lumps[i].fileofs + headersrc->lumps[i].filelen < 0) {
+				Host_Error("CM_LoadMap: %s has invalid lump definitions", name);
+			}
+
+			required_length += headersrc->lumps[i].filelen;
+		}
 	}
 
-	cmod_base = (byte *)header;
 
-	// checksum all of the map, except for entities
-	map_checksum = map_checksum2 = 0;
-	for (i = 0; i < HEADER_LUMPS; i++) {
-		if (i == LUMP_ENTITIES)
-			continue;
-		map_checksum ^= LittleLong(Com_BlockChecksum(cmod_base + header->lumps[i].fileofs, header->lumps[i].filelen));
+Com_Printf("Required_length: %d \n", required_length);
 
-		if (i == LUMP_VISIBILITY || i == LUMP_LEAFS || i == LUMP_NODES)
-			continue;
-		map_checksum2 ^= LittleLong(Com_BlockChecksum(cmod_base + header->lumps[i].fileofs, header->lumps[i].filelen));
+
+
+	if (!map_source) {
+		if (pad_lumps) {
+			int position = 0;
+			int required_size = sizeof(dheader_t) + required_length + HEADER_LUMPS * 4 + 1;
+			padded_buf = Q_malloc(required_size);
+
+			// Copy header
+			memcpy(padded_buf, buf, sizeof(dheader_t));
+			header = (dheader_t*)padded_buf;
+			position += sizeof(dheader_t);
+
+			// Copy lumps: align on 4-byte boundary
+			for (i = 0; i < HEADER_LUMPS; ++i) {
+				if (position % 4) {
+					position += 4 - (position % 4);
+				}
+				if (position + header->lumps[i].filelen > required_size) {
+					Host_Error("CM_LoadMap: %s caused error while aligning lumps", name);
+				}
+				memcpy((byte*)padded_buf + position, ((byte*)buf) + header->lumps[i].fileofs, header->lumps[i].filelen);
+				header->lumps[i].fileofs = position;
+
+				position += header->lumps[i].filelen;
+			}
+
+			// Use the new buffer
+			buf = padded_buf;
+		}
+	} else {
+		if (pad_lumps) {
+			int position = 0;
+			int required_size = sizeof(dheadersrc_t) + required_length + HEADER_LUMPSSRC * 4 + 1;
+			padded_buf = Q_malloc(required_size);
+
+			// Copy header
+			memcpy(padded_buf, buf, sizeof(dheadersrc_t));
+			headersrc = (dheadersrc_t*)padded_buf;
+			position += sizeof(dheadersrc_t);
+
+			// Copy lumps: align on 4-byte boundary
+			for (i = 0; i < HEADER_LUMPSSRC; ++i) {
+				if (position % 4) {
+					position += 4 - (position % 4);
+				}
+				if (position + headersrc->lumps[i].filelen > required_size) {
+					Com_Printf("pos : %d \n", position);
+					Com_Printf("filelen : %d \n", headersrc->lumps[i].filelen);
+					Com_Printf("pos + len: %d, rs: %d \n", position + headersrc->lumps[i].filelen , required_size);
+					Host_Error("CM_LoadMap: %s caused error while aligning lumps", name);
+				}
+				memcpy((byte*)padded_buf + position, ((byte*)buf) + headersrc->lumps[i].fileofs, headersrc->lumps[i].filelen);
+				headersrc->lumps[i].fileofs = position;
+
+				position += headersrc->lumps[i].filelen;
+			}
+
+			// Use the new buffer
+			buf = padded_buf;
+		}
 	}
+
+
+Com_Printf("e4 \n");
+
+
+	if (!map_source) {
+		cmod_base = (byte *)header;
+
+		// checksum all of the map, except for entities
+		map_checksum = map_checksum2 = 0;
+		for (i = 0; i < HEADER_LUMPS; i++) {
+			if (i == LUMP_ENTITIES)
+				continue;
+			map_checksum ^= LittleLong(Com_BlockChecksum(cmod_base + header->lumps[i].fileofs, header->lumps[i].filelen));
+
+			if (i == LUMP_VISIBILITY || i == LUMP_LEAFS || i == LUMP_NODES)
+				continue;
+			map_checksum2 ^= LittleLong(Com_BlockChecksum(cmod_base + header->lumps[i].fileofs, header->lumps[i].filelen));
+		}
+	} else {
+		cmod_base = (byte *)headersrc;
+
+		// checksum all of the map, except for entities
+		map_checksum = map_checksum2 = 0;
+		for (i = 0; i <  HEADER_LUMPSSRC; i++) {
+			if (i == LUMP_ENTITIES)
+				continue;
+			map_checksum ^= LittleLong(Com_BlockChecksum(cmod_base + headersrc->lumps[i].fileofs, headersrc->lumps[i].filelen));
+
+			if (i == LUMP_VISIBILITY || i == LUMP_LEAFS || i == LUMP_NODES)
+				continue;
+			map_checksum2 ^= LittleLong(Com_BlockChecksum(cmod_base + headersrc->lumps[i].fileofs, headersrc->lumps[i].filelen));
+		}
+	}
+
 	if (checksum)
 		*checksum = map_checksum;
 	*checksum2 = map_checksum2;
 
+Com_Printf("Map_checksum: %d \n", map_checksum);
+Com_Printf("Map_checksum2: %d \n", map_checksum2);
+
+
 	// load into heap
-	CM_LoadPlanes (&header->lumps[LUMP_PLANES]);
+	if (!map_source)
+		CM_LoadPlanes (&header->lumps[LUMP_PLANES]);
+	else
+		CM_LoadPlanesSRC (&headersrc->lumps[LUMP_PLANES]);
+
+
 	if (LittleLong(header->version) == Q1_BSPVERSION29a) {
 		CM_LoadLeafs29a(&header->lumps[LUMP_LEAFS]);
 		CM_LoadNodes29a(&header->lumps[LUMP_NODES]);
@@ -1265,18 +1613,33 @@ cmodel_t *CM_LoadMap (char *name, qbool clientload, unsigned *checksum, unsigned
 		CM_LoadClipnodesBSP2(&header->lumps[LUMP_CLIPNODES]);
 		cm_load_pvs_func = CM_BuildPVSBSP2;
 	}
-	else {
+	else if (LittleLong(header->version) == Q1_BSPVERSION ||  LittleLong(header->version) == HL_BSPVERSION) {
 		CM_LoadLeafs(&header->lumps[LUMP_LEAFS]);
 		CM_LoadNodes(&header->lumps[LUMP_NODES]);
 		CM_LoadClipnodes(&header->lumps[LUMP_CLIPNODES]);
 		cm_load_pvs_func = CM_BuildPVS;
 	}
-	CM_LoadEntities (&header->lumps[LUMP_ENTITIES]);
-	CM_LoadSubmodels (&header->lumps[LUMP_MODELS]);
+	else if (LittleLong(header->version) == SRC_IDBSPHEADER) {
+		CM_LoadLeafsSRC(&headersrc->lumps[LUMP_LEAFS]);
+		CM_LoadNodesSRC(&headersrc->lumps[LUMP_NODES]);
+//		CM_LoadClipnodesSRC(&headersrc->lumps[LUMP_CLIPNODES]);
+		cm_load_pvs_funcSRC = CM_BuildPVSSRC;
+	}
+
+	if (!map_source) {
+		CM_LoadEntities (&header->lumps[LUMP_ENTITIES]);
+		CM_LoadSubmodels (&header->lumps[LUMP_MODELS]);
+	} else {
+		CM_LoadEntitiesSRC (&headersrc->lumps[LUMP_ENTITIES]);
+		CM_LoadSubmodelsSRC (&headersrc->lumps[LUMP_MODELS]);
+	}
 
 	CM_MakeHull0 ();
 
-	cm_load_pvs_func (&header->lumps[LUMP_VISIBILITY], &header->lumps[LUMP_LEAFS]);
+	if (!map_source)
+		cm_load_pvs_func (&header->lumps[LUMP_VISIBILITY], &header->lumps[LUMP_LEAFS]);
+	else
+		cm_load_pvs_funcSRC (&headersrc->lumps[LUMP_VISIBILITY], &headersrc->lumps[LUMP_LEAFS]);
 
 	if (!clientload) // client doesn't need PHS
 		CM_BuildPHS ();
