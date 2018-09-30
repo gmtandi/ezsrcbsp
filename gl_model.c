@@ -700,7 +700,7 @@ void Mod_LoadTexturesSRC (lumpsrc_t *l) {
 		return;
 	}
 
-	m = (dmiptexlump_t *) (mod_base + l->fileofs);
+	m = (dtexdata_t *) (mod_base + l->fileofs);
 	m->nummiptex = LittleLong (m->nummiptex);
 	loadmodel->numtextures = m->nummiptex;
 	loadmodel->textures = (texture_t **) Hunk_AllocName (m->nummiptex * sizeof(*loadmodel->textures), loadname);
@@ -1341,7 +1341,7 @@ void Mod_LoadSubmodels (lump_t *l) {
 
 void Mod_LoadSubmodelsSRC (lumpsrc_t *l) {
 	dmodelsrc_t *in;
-	dmodelsrc_t *out;
+	dmodel_t *out;
 	int i, j, count;
 
 	in = (void *)(mod_base + l->fileofs);
@@ -1351,7 +1351,7 @@ void Mod_LoadSubmodelsSRC (lumpsrc_t *l) {
 	printf("SUBMODELS: %d\n", count);
 	if (count > MAX_MODELS)
 		Host_Error("Mod_LoadSubmodels : count > MAX_MODELS");
-	out = (dmodelsrc_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
+	out = (dmodel_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
 
 	loadmodel->submodels = out;
 	loadmodel->numsubmodels = count;
@@ -1365,9 +1365,10 @@ void Mod_LoadSubmodelsSRC (lumpsrc_t *l) {
 // SEE LATER
 //		for (j = 0; j < MAX_MAP_HULLS; j++)
 //			out->headnode[j] = LittleLong (in->headnode[j]);
-		out->headnode = LittleLong (in->headnode);
+for (j = 0; j < MAX_MAP_HULLS; j++)
+		out->headnode[j] = LittleLong (in->headnode);
 //		out->visleafs = LittleLong (in->visleafs);
-//		out->visleafs = 0;
+		out->visleafs = 0;
 		out->firstface = LittleLong (in->firstface);
 		out->numfaces = LittleLong (in->numfaces);
 	}
@@ -1714,9 +1715,11 @@ void Mod_LoadFacesBSP2 (lump_t *l) {
 }
 
 void Mod_SetParent (mnode_t *node, mnode_t *parent) {
+	printf("node: %d, parent: %d\n", node, parent);
+
 	if (node == NULL)
 		return;
-	printf("node: %d, parent: %d\n", node, parent);
+// see later
 	node->parent = parent;
 	if (node->contents < 0)
 		return;
@@ -2297,7 +2300,8 @@ void Mod_LoadBrushModel (model_t *mod, void *buffer, int filesize) {
 
 	// swap all the lumps
 
-	if (mod->bspversion != SRC_IDBSPHEADER) {
+	if (mod->bspversion == Q1_BSPVERSION || mod->bspversion == HL_BSPVERSION || mod->bspversion == Q1_BSPVERSION2 || mod->bspversion == Q1_BSPVERSION29a) {
+
 	mod_base = (byte *)header;
 
 	for (i = 0; i < sizeof(dheader_t) / 4; i++)
@@ -2377,8 +2381,6 @@ void Mod_LoadBrushModel (model_t *mod, void *buffer, int filesize) {
 		}
 	}
 	} else {
-
-
 
 		mod_base = (byte *)headersrc;
 
@@ -3134,6 +3136,9 @@ void Mod_LoadSpriteModel (model_t *mod, void *buffer) {
 //It was used in one of the older versions when it supported Q2 Models.
 void Mod_AddModelFlags(model_t *mod)
 {
+
+	printf("MODEL: %s\n", mod->name);
+
 	//modhints
 	if (!strcmp(mod->name, "progs/player.mdl")) {
 		mod->modhint = MOD_PLAYER;

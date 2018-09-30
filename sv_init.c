@@ -542,9 +542,11 @@ void SV_SpawnServer(char *mapname, qbool devmap, char* entityfile, qbool loading
 		}
 	}
 
-//	if (!entitystring) {
-//		entitystring = CM_EntityString();
-//	}
+// SEE LATER
+
+	if (!entitystring) {
+		entitystring = CM_EntityString();
+	}
 
 	PR_LoadEnts(entitystring);
 	// ********* End of External Entity support code *********

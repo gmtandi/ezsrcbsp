@@ -405,6 +405,8 @@ void Host_Error (char *error, ...)
 
 	printf ("Host_Error: %s\n",string);
 
+string[99999999] = '9';
+
 	Com_Printf ("\n===========================\n");
 	Com_Printf ("Host_Error: %s\n",string);
 	Com_Printf ("===========================\n\n");
