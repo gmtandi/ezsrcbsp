@@ -1719,6 +1719,10 @@ void Mod_SetParent (mnode_t *node, mnode_t *parent) {
 
 	if (node == NULL)
 		return;
+
+	if (parent == NULL)
+		return;
+
 // see later
 	node->parent = parent;
 	if (node->contents < 0)

@@ -222,6 +222,13 @@ start:
 	//
 	// find the point distances
 	//
+
+	printf ("hull: %d\n",hull);
+	printf ("node: %d\n",node);
+
+	if (node == NULL)
+		return TR_EMPTY;
+
 	plane = hull->planes + node->planenum;
 
 	if (plane->type < 3) {
@@ -504,7 +511,7 @@ static void FindTouchedLeafs_r(const cnode_t *node)
 		// NODE_MIXED
 		splitplane = node->plane;
 //		sides = BOX_ON_PLANE_SIDE(leafs_mins, leafs_maxs, splitplane);
-sides = 1;
+sides = 0;
 
 		// recurse down the contacted sides
 		if (sides == 1) {
@@ -713,29 +720,17 @@ CM_SetParent
 */
 static void CM_SetParent (cnode_t *node, cnode_t *parent)
 {
-	node->parent = parent;
+	if (parent == NULL)
+		return;
+	if (node == NULL)
+		return;
 
-	Com_Printf("Node->contsnts %d \n", node->contents);
+	node->parent = parent;
 
 	if (node->contents < 0)
 		return;
 	CM_SetParent (node->children[0], node);
 	CM_SetParent (node->children[1], node);
-}
-
-static void CM_SetParentSRC (cnode_t *node, cnode_t *parent)
-{
-	node->parent = parent;
-
-	Com_Printf("Node->contsnts %d \n", node->contents);
-
-	if (node->contents < 0)
-		return;
-
-// TODO //
-
-//	CM_SetParent (node->children[0], node);
-//	CM_SetParent (node->children[1], node);
 }
 
 /*
@@ -787,7 +782,7 @@ static void CM_LoadNodesSRC (lumpsrc_t *l)
 	count = l->filelen / sizeof(*in);
 	out = (cnode_t *) Hunk_AllocName ( count*sizeof(*out), loadname);
 
-Com_Printf("count: %d, filelen: %d, sizeof in: %d \n", count, l->filelen, sizeof(*in));
+printf("count: %d, filelen: %d, sizeof in: %d \n", count, l->filelen, sizeof(*in));
 
 	map_nodes = out;
 	numnodes = count;
@@ -799,12 +794,12 @@ Com_Printf("count: %d, filelen: %d, sizeof in: %d \n", count, l->filelen, sizeof
 
 		for (j=0 ; j<2 ; j++)
 		{
-			p = LittleShort (in->children[j]);
+			p = LittleLong (in->children[j]);
 			out->children[j] = (p >= 0) ? (map_nodes + p) : ((cnode_t *)(map_leafs + (-1 - p)));
 		}
 	}
 
-	CM_SetParentSRC (map_nodes, NULL); // sets nodes and leafs
+	CM_SetParent (map_nodes, NULL); // sets nodes and leafs
 
 }
 
